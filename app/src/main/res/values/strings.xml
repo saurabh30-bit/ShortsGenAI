@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">ShortsGenAI</string>
+    <string name="accessibility_service_description">Automates generating videos in Gemini and posting to Instagram and YouTube.</string>
+</resources>
