@@ -296,6 +296,7 @@ class AutoPublisherService : AccessibilityService() {
     }
 
     private fun handleInstaUpload(root: AccessibilityNodeInfo) {
+        // Step 1: Check if "Write a caption..." is on screen
         val captionNodes = root.findAccessibilityNodeInfosByText("Write a caption...")
         if (captionNodes.isNotEmpty()) {
             val args = Bundle()
@@ -304,12 +305,34 @@ class AutoPublisherService : AccessibilityService() {
             
             val shareNodes = root.findAccessibilityNodeInfosByText("Share")
             if (shareNodes.isNotEmpty()) {
-                shareNodes[0].performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                val target = if (shareNodes[0].isClickable) shareNodes[0] else shareNodes[0].parent
+                target?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
                 Log.d(TAG, "Instagram Shared. Moving to YouTube...")
                 
-                // Wait for Insta upload to start, then move to YouTube
+                // Set state to IDLE to prevent multiple clicks
+                currentState = State.IDLE
                 handler.postDelayed({ shareToYouTube() }, 3000)
             }
+            return
+        }
+
+        // Step 2: If we are not on the caption screen, check if we need to click "Next"
+        val nextNodes = root.findAccessibilityNodeInfosByText("Next")
+        val clickableNext = nextNodes.filter { it.isClickable || it.parent?.isClickable == true }
+        if (clickableNext.isNotEmpty()) {
+            val target = if (clickableNext[0].isClickable) clickableNext[0] else clickableNext[0].parent
+            target?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            return
+        }
+
+        // Step 3: Check if we are on the Share picker screen and need to select "Reel" or "Reels"
+        val reelNodes = root.findAccessibilityNodeInfosByText("Reel")
+        val reelsNodes = root.findAccessibilityNodeInfosByText("Reels")
+        val combinedReels = (reelNodes + reelsNodes).filter { it.isClickable || it.parent?.isClickable == true }
+        if (combinedReels.isNotEmpty()) {
+            val target = if (combinedReels[0].isClickable) combinedReels[0] else combinedReels[0].parent
+            target?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            return
         }
     }
 
@@ -331,6 +354,7 @@ class AutoPublisherService : AccessibilityService() {
     }
 
     private fun handleYouTubeUpload(root: AccessibilityNodeInfo) {
+        // Step 1: Check if "Caption your Short" is on screen
         val captionNodes = root.findAccessibilityNodeInfosByText("Caption your Short")
         if (captionNodes.isNotEmpty()) {
             val args = Bundle()
@@ -339,11 +363,22 @@ class AutoPublisherService : AccessibilityService() {
             
             val uploadNodes = root.findAccessibilityNodeInfosByText("Upload Short")
             if (uploadNodes.isNotEmpty()) {
-                uploadNodes[0].performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                val target = if (uploadNodes[0].isClickable) uploadNodes[0] else uploadNodes[0].parent
+                target?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
                 currentState = State.IDLE
                 Toast.makeText(applicationContext, "Automation Fully Complete!", Toast.LENGTH_LONG).show()
                 Log.d(TAG, "Automation fully complete.")
             }
+            return
+        }
+
+        // Step 2: Check for "Next" button in the preview screen
+        val nextNodes = root.findAccessibilityNodeInfosByText("Next")
+        val clickableNext = nextNodes.filter { it.isClickable || it.parent?.isClickable == true }
+        if (clickableNext.isNotEmpty()) {
+            val target = if (clickableNext[0].isClickable) clickableNext[0] else clickableNext[0].parent
+            target?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            return
         }
     }
 
