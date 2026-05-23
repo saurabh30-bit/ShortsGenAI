@@ -171,17 +171,27 @@ class AutoPublisherService : AccessibilityService() {
     }
 
     private fun handleGeminiWait(root: AccessibilityNodeInfo) {
-        val downloadNodes = root.findAccessibilityNodeInfosByText("Download")
-        if (downloadNodes.isNotEmpty()) {
-            downloadNodes[0].performAction(AccessibilityNodeInfo.ACTION_CLICK)
-            Log.d(TAG, "Download clicked. Polling Downloads folder...")
+        val downloadNode = root.findAccessibilityNodeInfosByText("Download").firstOrNull { it.isClickable || it.parent?.isClickable == true }
+            ?: findNodeByContentDesc(root, "Download")
+            ?: findNodeByContentDesc(root, "Save")
+            
+        if (downloadNode != null) {
+            val target = if (downloadNode.isClickable) downloadNode else downloadNode.parent
+            target?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            Log.d(TAG, "Download clicked. Polling media directories...")
             
             currentState = State.WAITING_FOR_DOWNLOAD_FILE
             startFilePolling()
         }
     }
 
+    private var lastKnownSize = -1L
+    private var sizeStableCount = 0
+
     private fun startFilePolling() {
+        lastKnownSize = -1L
+        sizeStableCount = 0
+        
         handler.postDelayed(object : Runnable {
             override fun run() {
                 if (currentState != State.WAITING_FOR_DOWNLOAD_FILE) return
@@ -190,18 +200,33 @@ class AutoPublisherService : AccessibilityService() {
                 val currentModified = currentLatestFile?.lastModified() ?: -1L
                 
                 if (currentModified != -1L && currentModified > baselineLastModified) {
-                    // New video detected!
-                    try {
-                        downloadedVideoUri = FileProvider.getUriForFile(
-                            applicationContext,
-                            "\${applicationContext.packageName}.fileprovider",
-                            currentLatestFile!!
-                        )
-                        Log.d(TAG, "New video found! URI: \$downloadedVideoUri")
-                        Toast.makeText(applicationContext, "Video Downloaded! Sharing to Insta...", Toast.LENGTH_SHORT).show()
-                        shareToInstagram()
-                    } catch (e: Exception) {
-                        Log.e(TAG, "FileProvider error: \${e.message}")
+                    val currentSize = currentLatestFile!!.length()
+                    
+                    // Verify the file is actually downloading and has finished
+                    if (currentSize > 0 && currentSize == lastKnownSize) {
+                        sizeStableCount++
+                    } else {
+                        lastKnownSize = currentSize
+                        sizeStableCount = 0
+                    }
+                    
+                    // If size > 0 and hasn't changed for 2 consecutive checks (4 seconds), it's fully downloaded
+                    if (sizeStableCount >= 2) {
+                        try {
+                            downloadedVideoUri = FileProvider.getUriForFile(
+                                applicationContext,
+                                "\${applicationContext.packageName}.fileprovider",
+                                currentLatestFile
+                            )
+                            Log.d(TAG, "New video verified! URI: \$downloadedVideoUri")
+                            Toast.makeText(applicationContext, "Video Ready! Sharing to Insta...", Toast.LENGTH_SHORT).show()
+                            shareToInstagram()
+                        } catch (e: Exception) {
+                            Log.e(TAG, "FileProvider error: \${e.message}")
+                        }
+                    } else {
+                        Log.d(TAG, "Video still downloading... Size: \$currentSize")
+                        handler.postDelayed(this, 2000)
                     }
                 } else {
                     // Check again in 2 seconds
@@ -213,11 +238,36 @@ class AutoPublisherService : AccessibilityService() {
 
     private fun getLatestDownloadFile(): File? {
         try {
-            val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-            if (!dir.exists() || !dir.isDirectory) return null
+            val dirsToWatch = listOf(
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES),
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM),
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
+            )
             
-            return dir.listFiles { file -> file.extension.equals("mp4", ignoreCase = true) }
-                ?.maxByOrNull { it.lastModified() }
+            var latestFile: File? = null
+            var maxModified = -1L
+            
+            for (dir in dirsToWatch) {
+                if (!dir.exists() || !dir.isDirectory) continue
+                
+                val files = dir.listFiles() ?: continue
+                for (file in files) {
+                    if (file.isDirectory) {
+                        val subFiles = file.listFiles() ?: continue
+                        for (subFile in subFiles) {
+                            if (subFile.extension.equals("mp4", ignoreCase = true) && subFile.lastModified() > maxModified) {
+                                maxModified = subFile.lastModified()
+                                latestFile = subFile
+                            }
+                        }
+                    } else if (file.extension.equals("mp4", ignoreCase = true) && file.lastModified() > maxModified) {
+                        maxModified = file.lastModified()
+                        latestFile = file
+                    }
+                }
+            }
+            return latestFile
         } catch (e: Exception) {
             Log.e(TAG, "Error listing files: \${e.message}")
         }
